@@ -33,7 +33,10 @@ import model_router
 # Estágios terminais: já não "arrefecem".
 ESTAGIOS_TERMINAIS = {"Cliente", "Perdido"}
 # Horas sem movimento a partir das quais um contacto está "a arrefecer".
-HORAS_ARREFECER = float(os.environ.get("COORD_HORAS_ARREFECER", "24"))
+# .strip() or "<default>" porque os.environ.get(chave, default) só devolve o
+# default quando a chave NÃO EXISTE — se existir mas estiver vazia (""), o
+# get devolve "" e o float("") seguinte rebenta o contentor.
+HORAS_ARREFECER = float(os.environ.get("COORD_HORAS_ARREFECER", "").strip() or "24")
 # Palavra-chave usada para inferir origem Angola (heurística sobre texto livre).
 ALVO_ANGOLA = "angola"
 

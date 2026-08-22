@@ -2,9 +2,9 @@
 model_router.py — Camada de fallback automático de modelo do coordenador Hermes.
 
 Ordem FIXA (do grátis ao caro):
-    1. Groq       (Llama 3.3 70B)   env GROQ_API_KEY
-    2. Cerebras   (Llama 3.3 70B)   env CEREBRAS_API_KEY
-    3. Gemini     (2.5 Flash)       env GEMINI_API_KEY
+    1. Groq       (GPT-OSS 120B)    env GROQ_API_KEY
+    2. Cerebras   (GPT-OSS 120B)    env CEREBRAS_API_KEY
+    3. Gemini     (3.6 Flash)       env GEMINI_API_KEY
     4. DeepSeek   (V3.2)            env DEEPSEEK_API_KEY   (só se todos os grátis falharem)
     5. Claude/Anthropic             env ANTHROPIC_API_KEY  (PROIBIDO por omissão;
                                     só se ALLOW_CLAUDE=1)
@@ -31,8 +31,11 @@ from typing import Callable, Optional
 import requests
 
 # Tempo (s) máximo por pedido HTTP e pausa curta entre tentativas.
-TIMEOUT_S = float(os.environ.get("ROUTER_TIMEOUT_S", "30"))
-BACKOFF_S = float(os.environ.get("ROUTER_BACKOFF_S", "1.0"))
+# .strip() or "<default>" porque os.environ.get(chave, default) só devolve o
+# default quando a chave NÃO EXISTE — se existir mas estiver vazia (""), o
+# get devolve "" e o float("") seguinte rebenta o contentor.
+TIMEOUT_S = float(os.environ.get("ROUTER_TIMEOUT_S", "").strip() or "30")
+BACKOFF_S = float(os.environ.get("ROUTER_BACKOFF_S", "").strip() or "1.0")
 
 
 # --------------------------------------------------------------------------- #
@@ -69,11 +72,11 @@ class Provedor:
 
 # Ordem é significativa: do grátis ao caro.
 PROVEDORES: list[Provedor] = [
-    Provedor("Groq", "GROQ_API_KEY", "llama-3.3-70b-versatile",
+    Provedor("Groq", "GROQ_API_KEY", "openai/gpt-oss-120b",
              "https://api.groq.com/openai/v1/chat/completions"),
-    Provedor("Cerebras", "CEREBRAS_API_KEY", "llama-3.3-70b",
+    Provedor("Cerebras", "CEREBRAS_API_KEY", "gpt-oss-120b",
              "https://api.cerebras.ai/v1/chat/completions"),
-    Provedor("Gemini", "GEMINI_API_KEY", "gemini-2.5-flash",
+    Provedor("Gemini", "GEMINI_API_KEY", "gemini-3.6-flash",
              "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
     Provedor("DeepSeek", "DEEPSEEK_API_KEY", "deepseek-chat",
              "https://api.deepseek.com/v1/chat/completions"),

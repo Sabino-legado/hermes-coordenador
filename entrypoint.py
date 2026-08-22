@@ -23,8 +23,11 @@ import coordinator
 import model_router
 
 # Configuração por ambiente (com valores por omissão seguros).
-RUN_MODE = os.environ.get("RUN_MODE", "loop").strip().lower()
-INTERVALO_MIN = float(os.environ.get("INTERVALO_MIN", "30"))
+# .strip() or "<default>" porque os.environ.get(chave, default) só devolve o
+# default quando a chave NÃO EXISTE — se existir mas estiver vazia (""), o
+# get devolve "" e o float("") seguinte rebenta o contentor.
+RUN_MODE = (os.environ.get("RUN_MODE", "").strip() or "loop").lower()
+INTERVALO_MIN = float(os.environ.get("INTERVALO_MIN", "").strip() or "30")
 
 _a_correr = True
 
