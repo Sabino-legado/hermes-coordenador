@@ -42,10 +42,12 @@ import copy_engine
 # Estágios terminais: já não "arrefecem".
 ESTAGIOS_TERMINAIS = {"Cliente", "Perdido"}
 # Horas sem movimento a partir das quais um contacto está "a arrefecer".
-# (os.environ.get(K) or default) => caixa vazia usa o default, não rebenta.
-HORAS_ARREFECER = float(os.environ.get("COORD_HORAS_ARREFECER") or "24")
+# .strip() or "<default>" porque os.environ.get(chave, default) só devolve o
+# default quando a chave NÃO EXISTE — se existir mas estiver vazia (""), o
+# get devolve "" e o float("") seguinte rebentava o contentor.
+HORAS_ARREFECER = float(os.environ.get("COORD_HORAS_ARREFECER", "").strip() or "24")
 # Máximo de copies geradas por corrida (protege a quota grátis).
-COPY_MAX_POR_CORRIDA = int(os.environ.get("COPY_MAX_POR_CORRIDA") or "15")
+COPY_MAX_POR_CORRIDA = int(os.environ.get("COPY_MAX_POR_CORRIDA", "").strip() or "15")
 # Palavra-chave usada para inferir origem Angola (heurística sobre texto livre).
 ALVO_ANGOLA = "angola"
 

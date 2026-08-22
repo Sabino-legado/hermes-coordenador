@@ -15,6 +15,10 @@ Regras:
     - Provedor sem env key -> salta em silêncio (não é erro, não gera log).
     - Cada troca de provedor grava uma linha em prospeccao_log
       (tipo='modelo_troca', modelo=novo, detalhe=motivo).
+    - HTTP 404 ou corpo com sinais de modelo descontinuado (ex.: "deprecated",
+      "model_not_found") grava SEMPRE tipo='modelo_caducado' antes de tentar o
+      seguinte — mesmo que o seguinte funcione. Não muda o fallback, só a etiqueta:
+      sem isto, só se descobre quando TODOS os provedores falham ao mesmo tempo.
     - Se TODOS falharem: levanta TodosProvedoresFalharam e regista tipo='erro'.
 
 NUNCA há chaves/segredos no código: tudo é lido de variáveis de ambiente POR NOME.
@@ -47,6 +51,10 @@ class ErroProvedor(Exception):
 
 class RateLimitProvedor(ErroProvedor):
     """HTTP 429 ou quota esgotada — deve tentar o seguinte."""
+
+
+class ModeloCaducado(ErroProvedor):
+    """HTTP 404 ou corpo indica modelo descontinuado/renomeado — deve tentar o seguinte."""
 
 
 class TodosProvedoresFalharam(Exception):
@@ -122,6 +130,15 @@ def registar_log(tipo: str, modelo: Optional[str], detalhe: str,
         print(f"[log:ERRO] não gravou ({e}) :: tipo={tipo} modelo={modelo} {detalhe}")
 
 
+# Sinais de que um modelo foi descontinuado/renomeado pelo provedor — distinto
+# de uma falha genérica, porque só se resolve trocando o ID no código, nunca
+# sozinho na corrida seguinte.
+PADROES_MODELO_CADUCADO = (
+    "no longer available", "deprecated", "decommissioned",
+    "does not exist", "model_not_found", "not found",
+)
+
+
 # --------------------------------------------------------------------------- #
 # Execução HTTP (isolada para ser facilmente mockada nos testes)
 # --------------------------------------------------------------------------- #
@@ -161,8 +178,19 @@ def _executar_http(prov: Provedor, mensagens: list[dict], timeout: float) -> str
     if resp.status_code == 429:
         raise RateLimitProvedor("HTTP 429 (rate limit)")
     if resp.status_code >= 400:
-        # Quota costuma vir como 402/403 com 'quota' no corpo.
         corpo = (resp.text or "").lower()
+        # Modelo descontinuado/renomeado: caso próprio, sempre registado, mesmo
+        # que o provedor seguinte funcione — senão só se descobre quando TODOS
+        # falharem ao mesmo tempo (já aconteceu, 2026-08-22 01:56, Gemini).
+        if resp.status_code == 404 or any(p in corpo for p in PADROES_MODELO_CADUCADO):
+            registar_log(
+                "modelo_caducado", prov.modelo,
+                f"{prov.nome}: modelo {prov.modelo} parece descontinuado — "
+                f"{(resp.text or '')[:200]}",
+                {"provedor": prov.nome, "modelo": prov.modelo, "http": resp.status_code},
+            )
+            raise ModeloCaducado(f"HTTP {resp.status_code}: modelo {prov.modelo} descontinuado")
+        # Quota costuma vir como 402/403 com 'quota' no corpo.
         if "quota" in corpo or "insufficient" in corpo:
             raise RateLimitProvedor(f"quota HTTP {resp.status_code}")
         raise ErroProvedor(f"HTTP {resp.status_code}: {resp.text[:200]}")
