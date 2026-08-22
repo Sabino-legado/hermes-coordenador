@@ -12,7 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Código.
-COPY model_router.py coordinator.py entrypoint.py ./
+COPY model_router.py coordinator.py copy_engine.py entrypoint.py ./
 
 # Corre como utilizador sem privilégios.
 RUN useradd -r -u 10001 hermes

@@ -29,14 +29,15 @@ from typing import Any, Optional
 import psycopg  # psycopg v3
 
 import model_router
+import copy_engine
 
 # Estágios terminais: já não "arrefecem".
 ESTAGIOS_TERMINAIS = {"Cliente", "Perdido"}
 # Horas sem movimento a partir das quais um contacto está "a arrefecer".
-# .strip() or "<default>" porque os.environ.get(chave, default) só devolve o
-# default quando a chave NÃO EXISTE — se existir mas estiver vazia (""), o
-# get devolve "" e o float("") seguinte rebenta o contentor.
-HORAS_ARREFECER = float(os.environ.get("COORD_HORAS_ARREFECER", "").strip() or "24")
+# (os.environ.get(K) or default) => caixa vazia usa o default, não rebenta.
+HORAS_ARREFECER = float(os.environ.get("COORD_HORAS_ARREFECER") or "24")
+# Máximo de copies geradas por corrida (protege a quota grátis).
+COPY_MAX_POR_CORRIDA = int(os.environ.get("COPY_MAX_POR_CORRIDA") or "15")
 # Palavra-chave usada para inferir origem Angola (heurística sobre texto livre).
 ALVO_ANGOLA = "angola"
 
@@ -126,7 +127,9 @@ class ResumoCorrida:
     falta_por_canal: dict[str, int] = field(default_factory=dict)
     angola_pct: float = 0.0
     angola_meta: float = 0.0
-    angola_ok: bool = True
+    angola_ok: Optional[bool] = None   # None => sem dados do dia ainda
+    total_dia: int = 0
+    copies_geradas: int = 0
     funil: dict[str, int] = field(default_factory=dict)
     a_arrefecer: list[dict[str, Any]] = field(default_factory=list)
     comentario: str = ""
@@ -161,9 +164,15 @@ def calcular_resumo(cur: psycopg.Cursor) -> ResumoCorrida:
 
     # % Angola vs meta angola_pct_min.
     ang, total = percentagem_angola(cur)
-    r.angola_pct = round(100.0 * ang / total, 1) if total else 0.0
+    r.total_dia = total
     r.angola_meta = r.metas.get("angola_pct_min", 0.0)
-    r.angola_ok = r.angola_pct >= r.angola_meta if total else True
+    if total:
+        r.angola_pct = round(100.0 * ang / total, 1)
+        r.angola_ok = r.angola_pct >= r.angola_meta
+    else:
+        # Sem envios hoje: não há base para dizer OK. Fica "sem dados" (None).
+        r.angola_pct = 0.0
+        r.angola_ok = None
     return r
 
 
@@ -192,6 +201,50 @@ def gerar_comentario(r: ResumoCorrida) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Geração de copy para a fila (DM, na fila, sem mensagem pronta)
+# --------------------------------------------------------------------------- #
+def gerar_copies_em_falta(conn: psycopg.Connection) -> int:
+    """
+    Gera copy para as linhas da INBOX que precisam: accao='DM', estado='Na fila'
+    e mensagem_pronta NULL/vazia. Faz UPDATE de mensagem_pronta.
+    NUNCA envia, nunca muda estado. Best-effort: se uma linha falhar, salta.
+    Devolve o número de copies escritas. Limite: COPY_MAX_POR_CORRIDA por corrida.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id_unico, nome, plataforma, porque_alvo, accao "
+            "FROM prospeccao_inbox "
+            "WHERE accao = 'DM' AND estado = 'Na fila' "
+            "  AND (mensagem_pronta IS NULL OR btrim(mensagem_pronta) = '') "
+            "ORDER BY created_at ASC NULLS LAST "
+            "LIMIT %s",
+            (COPY_MAX_POR_CORRIDA,),
+        )
+        cols = [c.name for c in cur.description]
+        pendentes = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    escritas = 0
+    for contacto in pendentes:
+        try:
+            texto = copy_engine.gerar_copy(contacto)
+        except Exception as e:  # noqa: BLE001 — best-effort por linha
+            print(f"[copy] falhou para {contacto.get('id_unico')}: {e}")
+            continue
+        if not texto:
+            continue
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE prospeccao_inbox SET mensagem_pronta = %s "
+                "WHERE id_unico = %s AND accao = 'DM' AND estado = 'Na fila' "
+                "  AND (mensagem_pronta IS NULL OR btrim(mensagem_pronta) = '')",
+                (texto, contacto["id_unico"]),
+            )
+        conn.commit()
+        escritas += 1
+    return escritas
+
+
+# --------------------------------------------------------------------------- #
 # Corrida principal
 # --------------------------------------------------------------------------- #
 def correr() -> ResumoCorrida:
@@ -202,6 +255,9 @@ def correr() -> ResumoCorrida:
         # Comentário fora do cursor de leitura (chamada de rede ao modelo).
         resumo.comentario = gerar_comentario(resumo)
 
+        # Gera copy para a fila que precisa (DM, na fila, sem mensagem pronta).
+        resumo.copies_geradas = gerar_copies_em_falta(conn)
+
         # Regista a corrida no log.
         with conn.cursor() as cur:
             cur.execute(
@@ -211,18 +267,31 @@ def correr() -> ResumoCorrida:
                  "corrida do coordenador", json.dumps(resumo.para_json(),
                                                       ensure_ascii=False)),
             )
+            # Regista quantas copies foram geradas nesta corrida.
+            cur.execute(
+                "INSERT INTO prospeccao_log (ts, tipo, modelo, detalhe, dados) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (datetime.now(timezone.utc), "copy_gerada", None,
+                 f"copies geradas nesta corrida: {resumo.copies_geradas}",
+                 json.dumps({"copies_geradas": resumo.copies_geradas,
+                             "limite": COPY_MAX_POR_CORRIDA}, ensure_ascii=False)),
+            )
         conn.commit()
     return resumo
 
 
 def _imprimir(r: ResumoCorrida) -> None:
     """Resumo legível em stdout (para systemd/journalctl)."""
+    if r.angola_ok is None:
+        angola_estado = "sem dados ainda"
+    else:
+        angola_estado = "OK" if r.angola_ok else "ABAIXO"
     print("=== Coordenador Hermes — corrida ===")
     print("Falta por canal:", r.falta_por_canal or "nada (metas cumpridas)")
-    print(f"Angola: {r.angola_pct}% (meta {r.angola_meta}%) -> "
-          f"{'OK' if r.angola_ok else 'ABAIXO'}")
+    print(f"Angola: {r.angola_pct}% (meta {r.angola_meta}%) -> {angola_estado}")
     print("Funil:", r.funil)
     print(f"A arrefecer (>{HORAS_ARREFECER}h): {len(r.a_arrefecer)} contactos")
+    print(f"Copies geradas: {r.copies_geradas} (limite {COPY_MAX_POR_CORRIDA})")
     print("Comentário:", r.comentario)
 
 

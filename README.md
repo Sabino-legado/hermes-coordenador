@@ -11,8 +11,11 @@ Nunca toca nas tabelas do produto (`analyses`, `fmp_cache`, `watchlist`,
 
 - `model_router.py` — fallback automático de modelo (Groq → Cerebras → Gemini → DeepSeek;
   Claude só com `ALLOW_CLAUDE=1`). Interface única `chat(mensagens, tarefa)`.
+- `copy_engine.py` — gera a copy de prospeção (método copy-prospecao: Schwartz + Ogilvy,
+  com os travões de marca do Hermes). Função `gerar_copy(contacto)`; corre pela cadeia grátis.
 - `coordinator.py` — corrida do coordenador: progresso por canal vs metas, % Angola,
-  funil, contactos a arrefecer, e registo em `prospeccao_log`.
+  funil, contactos a arrefecer, geração de copy para a fila (DM na fila sem mensagem
+  pronta, até `COPY_MAX_POR_CORRIDA`), e registo em `prospeccao_log`.
 - `entrypoint.py` — arranque em contentor: modo `loop` (a cada `INTERVALO_MIN` min) ou `once`.
 - `requirements.txt`, `Dockerfile`, `.env.example`, `.gitignore`.
 
@@ -33,6 +36,7 @@ Ver `.env.example` (só nomes). `SUPABASE_DB_URL` deve ser a connection string d
 | `DEEPSEEK_API_KEY` | provedor 4 (DeepSeek V3.2) | opcional* |
 | `RUN_MODE` | `loop` (omissão) ou `once` | não |
 | `INTERVALO_MIN` | minutos entre corridas no modo loop (omissão 30) | não |
+| `COPY_MAX_POR_CORRIDA` | máximo de copies geradas por corrida (omissão 15) | não |
 
 \* Um provedor sem a sua env key é saltado em silêncio. Configura pelo menos um.
 
