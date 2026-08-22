@@ -6,11 +6,14 @@ O que faz numa corrida:
     (b) calcula o progresso do dia por canal vs metas (msgs_*_dia) e a % Angola;
     (c) identifica o que falta para as metas e os contactos que estão a arrefecer;
     (d) usa o model_router para gerar um comentário/decisão curta (best-effort);
-    (e) gera copy para a fila (DM, "Na fila", sem mensagem pronta) e grava-a
-        SEMPRE em mensagem_pronta; quando o texto tem sinais de um número
-        concreto (percentagem/ano) — que pode ser um facto verdadeiro sobre o
-        CONTACTO, não sobre o Hermes — marca a linha para revisão humana em
-        `notas` e regista (tipo='copy_marcada'), sem nunca bloquear a copy;
+    (e) gera copy para a fila (DM, "Na fila", sem mensagem pronta):
+        - marcador de template por preencher (ex.: "[Seu Nome]") NUNCA é legítimo
+          → bloqueia, não grava em mensagem_pronta, regista (tipo='copy_erro')
+          e passa ao contacto seguinte;
+        - sinal de número concreto (percentagem/ano) PODE ser um facto verdadeiro
+          sobre o CONTACTO, não sobre o Hermes → grava sempre em mensagem_pronta,
+          só marca a linha para revisão humana em `notas` e regista
+          (tipo='copy_marcada'), nunca bloqueia;
     (f) escreve um resumo da corrida em prospeccao_log
         (tipo='coordenador_run', dados jsonb com os números).
 
@@ -215,18 +218,22 @@ NOTA_REVISAO_NUMERO = "REVER: contém número — confirmar antes de enviar."
 def gerar_copies_em_falta(conn: psycopg.Connection) -> int:
     """
     Gera copy para as linhas da INBOX que precisam: accao='DM', estado='Na fila'
-    e mensagem_pronta NULL/vazia. A copy é SEMPRE gravada em mensagem_pronta —
-    nunca é bloqueada nem perdida.
+    e mensagem_pronta NULL/vazia. Dois sinais pós-geração, tratados de forma
+    DIFERENTE de propósito:
 
-    Um número/ano no texto não prova um dado inventado sobre o Hermes: pode ser
-    um facto verdadeiro sobre o CONTACTO (ex.: "27 fundos desde 2016" do BFA), e
-    a regex não distingue os dois casos. Por isso só MARCA a linha para revisão
-    humana — acrescenta NOTA_REVISAO_NUMERO à coluna `notas` (preservando o que
-    já lá estiver) e regista tipo='copy_marcada' — nunca escreve a nota dentro
-    da própria mensagem_pronta.
+    - Marcador de template por preencher (ex.: "[Seu Nome]") NUNCA é legítimo —
+      é sempre um defeito. BLOQUEIA: não grava em mensagem_pronta, regista
+      tipo='copy_erro' com o id_unico e o texto, e passa ao contacto seguinte.
+    - Número/ano no texto não prova um dado inventado sobre o Hermes: pode ser
+      um facto verdadeiro sobre o CONTACTO (ex.: "27 fundos desde 2016" do BFA),
+      e a regex não distingue os dois casos. NÃO bloqueia — grava sempre em
+      mensagem_pronta e só MARCA a linha para revisão humana, acrescentando
+      NOTA_REVISAO_NUMERO à coluna `notas` (preservando o que já lá estiver) e
+      registando tipo='copy_marcada'. A nota nunca entra na própria mensagem.
 
     NUNCA envia, nunca muda estado. Best-effort: se uma linha falhar a gerar, salta.
-    Devolve o número de copies escritas. Limite: COPY_MAX_POR_CORRIDA por corrida.
+    Devolve o número de copies escritas (marcadas contam; bloqueadas não).
+    Limite: COPY_MAX_POR_CORRIDA por corrida.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -249,6 +256,24 @@ def gerar_copies_em_falta(conn: psycopg.Connection) -> int:
             print(f"[copy] falhou para {contacto.get('id_unico')}: {e}")
             continue
         if not texto:
+            continue
+
+        # Bloqueante: um marcador de template por preencher nunca é legítimo.
+        if copy_engine.contem_marcador_template(texto):
+            motivo = (
+                "texto contém um marcador de template entre parênteses rectos "
+                "(ex.: [Seu Nome]) — nunca legítimo, ao contrário de um número"
+            )
+            print(f"[copy] erro para {contacto.get('id_unico')}: {motivo}")
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO prospeccao_log (ts, tipo, modelo, detalhe, dados) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (datetime.now(timezone.utc), "copy_erro", None, motivo,
+                     json.dumps({"id_unico": contacto.get("id_unico"), "texto": texto},
+                                ensure_ascii=False)),
+                )
+            conn.commit()
             continue
 
         marcar_revisao = copy_engine.contem_dados_inventados(texto)

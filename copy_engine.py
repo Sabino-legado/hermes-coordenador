@@ -93,6 +93,12 @@ PROIBIÇÕES (nunca as quebres):
   inventada.
 - O PEDIDO DE FECHO É SEMPRE UM PEDIDO DE OPINIÃO/FEEDBACK ("faz sentido falarmos?",
   "que feedback terias?"), NUNCA UMA PROMESSA DE RESULTADO OU RETORNO.
+- NUNCA USES MARCADORES DE TEMPLATE ENTRE PARÊNTESES RECTOS ("[Nome]", "[Seu Nome]",
+  "[empresa]", etc.). Se não souberes um dado, reescreve a frase sem ele — nunca
+  deixes um marcador por preencher.
+- NÃO ESCREVAS BLOCO DE ASSINATURA EM MENSAGENS DE DM (nome, cargo, "Hermes
+  Research" no fim) — a plataforma já identifica quem envia. Termina a mensagem
+  na pergunta ou no agradecimento do fecho, sem despedida formal a seguir.
 
 TRAVÕES DE MARCA (nunca os quebres):
 - NUNCA reveles nem insinues IA, motor, engine, LLM, automação ou "sistema" por trás.
@@ -111,6 +117,9 @@ LÍNGUA E TRATAMENTO (nunca os quebres):
   fim, sem misturar os dois: "você" em LinkedIn e contactos institucionais
   (empresas, jornais, SGOIC, SDVM); "tu" só em Instagram/TikTok de criadores
   individuais.
+- Concordância de género do Hermes: escreve sempre "o Hermes Research" e "fundado
+  por Sabino Kalufele" — masculino, sem exceção. Nunca "a Hermes Research" nem
+  "fundada por".
 
 SAÍDA: devolve APENAS a mensagem pronta a enviar (se for email, assunto numa primeira
 linha "Assunto: ..." e depois o corpo; se for DM, só o corpo). Sem notas, sem aspas à
@@ -155,13 +164,23 @@ def gerar_copy(contacto: dict[str, Any]) -> str:
 # Rede de segurança pós-geração — o prompt proíbe isto, mas o modelo pode falhar.
 # --------------------------------------------------------------------------- #
 # Percentagem numérica (ex.: "28%") ou ano de 4 dígitos (19xx/20xx) — sinais de
-# um número/caso concreto que a ficha de factos não sustenta.
+# um número/caso concreto que a ficha de factos não sustenta. NÃO bloqueante:
+# pode ser um facto verdadeiro sobre o CONTACTO, não sobre o Hermes.
 PADRAO_DADOS_INVENTADOS = re.compile(r"\d+\s*%|\b(19|20)\d{2}\b")
+
+# Marcador de template por preencher (ex.: "[Seu Nome]", "[empresa]"). Ao
+# contrário de um número, isto NUNCA é legítimo — é sempre bloqueante.
+PADRAO_MARCADOR_TEMPLATE = re.compile(r"\[[^\]]{1,40}\]")
 
 
 def contem_dados_inventados(texto: str) -> bool:
     """True se o texto tiver uma percentagem numérica ou um ano — possível dado inventado."""
     return bool(PADRAO_DADOS_INVENTADOS.search(texto))
+
+
+def contem_marcador_template(texto: str) -> bool:
+    """True se o texto tiver um marcador de template entre parênteses rectos por preencher."""
+    return bool(PADRAO_MARCADOR_TEMPLATE.search(texto))
 
 
 if __name__ == "__main__":
