@@ -19,7 +19,9 @@ A ÚNICA fonte de factos sobre o Hermes é a FICHA_DE_FACTOS abaixo, mais o camp
 "porque_alvo" do contacto — o modelo é explicitamente proibido de inventar
 números, casos ou capacidades fora disto (o Hermes ainda está em validação,
 sem clientes públicos nem resultados divulgáveis). `contem_dados_inventados()`
-é a rede de segurança pós-geração, para quando o prompt sozinho não chega.
+é um SINAL pós-geração (não um bloqueio — um número pode ser um facto
+verdadeiro sobre o CONTACTO, não sobre o Hermes); quem chama decide o que
+fazer com o sinal, nunca descarta a copy só por causa dele.
 
 A geração corre pela cadeia grátis do model_router (sem segredos no código).
 """
@@ -106,8 +108,9 @@ LÍNGUA E TRATAMENTO (nunca os quebres):
   "junto de" (nunca "junto a"), "sector" (nunca "setor"), e qualquer outra palavra
   equivalente do mesmo tipo.
 - Escolhe um único tratamento para a mensagem inteira e mantém-no do princípio ao
-  fim, sem misturar os dois: "você" em LinkedIn e contactos institucionais; "tu"
-  só em Instagram/TikTok de criadores individuais.
+  fim, sem misturar os dois: "você" em LinkedIn e contactos institucionais
+  (empresas, jornais, SGOIC, SDVM); "tu" só em Instagram/TikTok de criadores
+  individuais.
 
 SAÍDA: devolve APENAS a mensagem pronta a enviar (se for email, assunto numa primeira
 linha "Assunto: ..." e depois o corpo; se for DM, só o corpo). Sem notas, sem aspas à
@@ -137,8 +140,9 @@ def gerar_copy(contacto: dict[str, Any]) -> str:
     Gera a copy de prospeção para um contacto e devolve só a mensagem (texto).
     Levanta model_router.TodosProvedoresFalharam se nenhum provedor responder.
 
-    NÃO valida o conteúdo — quem chama (coordinator.gerar_copies_em_falta) tem
-    de correr contem_dados_inventados() antes de gravar, com acesso ao log.
+    NÃO valida o conteúdo — quem chama (coordinator.gerar_copies_em_falta) corre
+    contem_dados_inventados() depois, só para decidir se marca a linha para
+    revisão humana; a copy é sempre gravada, nunca descartada por isto.
     """
     mensagens = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -171,7 +175,7 @@ if __name__ == "__main__":
     try:
         texto = gerar_copy(exemplo)
         if contem_dados_inventados(texto):
-            print(f"[aviso] texto contém possíveis dados inventados:\n{texto}")
+            print(f"[marcar para revisão — contém número/ano]\n{texto}")
         else:
             print(texto)
     except model_router.TodosProvedoresFalharam as e:

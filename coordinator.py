@@ -6,9 +6,11 @@ O que faz numa corrida:
     (b) calcula o progresso do dia por canal vs metas (msgs_*_dia) e a % Angola;
     (c) identifica o que falta para as metas e os contactos que estão a arrefecer;
     (d) usa o model_router para gerar um comentário/decisão curta (best-effort);
-    (e) gera copy para a fila (DM, "Na fila", sem mensagem pronta), rejeitando e
-        registando (tipo='copy_rejeitada') qualquer texto com sinais de dados
-        inventados (percentagem/ano) em vez de gravar em mensagem_pronta;
+    (e) gera copy para a fila (DM, "Na fila", sem mensagem pronta) e grava-a
+        SEMPRE em mensagem_pronta; quando o texto tem sinais de um número
+        concreto (percentagem/ano) — que pode ser um facto verdadeiro sobre o
+        CONTACTO, não sobre o Hermes — marca a linha para revisão humana em
+        `notas` e regista (tipo='copy_marcada'), sem nunca bloquear a copy;
     (f) escreve um resumo da corrida em prospeccao_log
         (tipo='coordenador_run', dados jsonb com os números).
 
@@ -206,16 +208,29 @@ def gerar_comentario(r: ResumoCorrida) -> str:
 # --------------------------------------------------------------------------- #
 # Geração de copy para a fila (DM, na fila, sem mensagem pronta)
 # --------------------------------------------------------------------------- #
+# Prefixo da nota de revisão — nunca entra na mensagem_pronta, só em notas.
+NOTA_REVISAO_NUMERO = "REVER: contém número — confirmar antes de enviar."
+
+
 def gerar_copies_em_falta(conn: psycopg.Connection) -> int:
     """
     Gera copy para as linhas da INBOX que precisam: accao='DM', estado='Na fila'
-    e mensagem_pronta NULL/vazia. Faz UPDATE de mensagem_pronta.
-    NUNCA envia, nunca muda estado. Best-effort: se uma linha falhar, salta.
+    e mensagem_pronta NULL/vazia. A copy é SEMPRE gravada em mensagem_pronta —
+    nunca é bloqueada nem perdida.
+
+    Um número/ano no texto não prova um dado inventado sobre o Hermes: pode ser
+    um facto verdadeiro sobre o CONTACTO (ex.: "27 fundos desde 2016" do BFA), e
+    a regex não distingue os dois casos. Por isso só MARCA a linha para revisão
+    humana — acrescenta NOTA_REVISAO_NUMERO à coluna `notas` (preservando o que
+    já lá estiver) e regista tipo='copy_marcada' — nunca escreve a nota dentro
+    da própria mensagem_pronta.
+
+    NUNCA envia, nunca muda estado. Best-effort: se uma linha falhar a gerar, salta.
     Devolve o número de copies escritas. Limite: COPY_MAX_POR_CORRIDA por corrida.
     """
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id_unico, nome, plataforma, porque_alvo, accao "
+            "SELECT id_unico, nome, plataforma, porque_alvo, accao, notas "
             "FROM prospeccao_inbox "
             "WHERE accao = 'DM' AND estado = 'Na fila' "
             "  AND (mensagem_pronta IS NULL OR btrim(mensagem_pronta) = '') "
@@ -236,34 +251,46 @@ def gerar_copies_em_falta(conn: psycopg.Connection) -> int:
         if not texto:
             continue
 
-        # Rede de segurança: rejeita e regista se parecer ter dados inventados
-        # (percentagem numérica ou ano) — nunca grava em mensagem_pronta.
-        if copy_engine.contem_dados_inventados(texto):
+        marcar_revisao = copy_engine.contem_dados_inventados(texto)
+
+        if marcar_revisao:
+            notas_antigas = (contacto.get("notas") or "").strip()
+            notas_novas = (f"{NOTA_REVISAO_NUMERO} {notas_antigas}".strip()
+                           if notas_antigas else NOTA_REVISAO_NUMERO)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE prospeccao_inbox SET mensagem_pronta = %s, notas = %s "
+                    "WHERE id_unico = %s AND accao = 'DM' AND estado = 'Na fila' "
+                    "  AND (mensagem_pronta IS NULL OR btrim(mensagem_pronta) = '')",
+                    (texto, notas_novas, contacto["id_unico"]),
+                )
+        else:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE prospeccao_inbox SET mensagem_pronta = %s "
+                    "WHERE id_unico = %s AND accao = 'DM' AND estado = 'Na fila' "
+                    "  AND (mensagem_pronta IS NULL OR btrim(mensagem_pronta) = '')",
+                    (texto, contacto["id_unico"]),
+                )
+        conn.commit()
+        escritas += 1
+
+        if marcar_revisao:
             motivo = (
-                "texto contém percentagem numérica ou ano — possível dado "
-                "inventado (o Hermes está em validação, sem números/casos reais)"
+                "texto contém percentagem numérica ou ano — marcado para "
+                "revisão humana em notas (pode ser um facto verdadeiro sobre "
+                "o contacto; a copy não é bloqueada)"
             )
-            print(f"[copy] rejeitada para {contacto.get('id_unico')}: {motivo}")
+            print(f"[copy] marcada para revisão: {contacto.get('id_unico')}: {motivo}")
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO prospeccao_log (ts, tipo, modelo, detalhe, dados) "
                     "VALUES (%s, %s, %s, %s, %s)",
-                    (datetime.now(timezone.utc), "copy_rejeitada", None, motivo,
-                     json.dumps({"id_unico": contacto.get("id_unico"), "texto": texto},
+                    (datetime.now(timezone.utc), "copy_marcada", None, motivo,
+                     json.dumps({"id_unico": contacto.get("id_unico"), "motivo": motivo},
                                 ensure_ascii=False)),
                 )
             conn.commit()
-            continue
-
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE prospeccao_inbox SET mensagem_pronta = %s "
-                "WHERE id_unico = %s AND accao = 'DM' AND estado = 'Na fila' "
-                "  AND (mensagem_pronta IS NULL OR btrim(mensagem_pronta) = '')",
-                (texto, contacto["id_unico"]),
-            )
-        conn.commit()
-        escritas += 1
     return escritas
 
 
