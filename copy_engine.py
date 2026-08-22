@@ -15,20 +15,44 @@ E respeita os TRAVÕES DE MARCA do Hermes:
     3. Nunca aconselhar compra/venda nem prometer retornos (o Hermes é
        investigação e análise — clareza e rigor, nunca recomendação financeira).
 
+A ÚNICA fonte de factos sobre o Hermes é a FICHA_DE_FACTOS abaixo, mais o campo
+"porque_alvo" do contacto — o modelo é explicitamente proibido de inventar
+números, casos ou capacidades fora disto (o Hermes ainda está em validação,
+sem clientes públicos nem resultados divulgáveis). `contem_dados_inventados()`
+é a rede de segurança pós-geração, para quando o prompt sozinho não chega.
+
 A geração corre pela cadeia grátis do model_router (sem segredos no código).
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import model_router
 
 # --------------------------------------------------------------------------- #
-# System prompt — o método + os travões, embutidos.
+# Ficha de factos — a ÚNICA fonte de verdade sobre o Hermes para esta copy.
 # --------------------------------------------------------------------------- #
-SYSTEM_PROMPT = """És o Mestre do Hermes a escrever, à mão, uma primeira mensagem \
+FICHA_DE_FACTOS = """FICHA DE FACTOS DO HERMES (a ÚNICA fonte de factos sobre o Hermes — nunca uses outra coisa):
+- Hermes Research, fundado por Sabino Kalufele.
+- Faz análise fundamental de empresas: modelo de negócio, análise financeira, premissas,
+  valuation, tese de investimento e riscos.
+- Foco: espaço lusófono, EUA e mercados africanos, com destaque para a BODIVA.
+- Fase atual: a validar com profissionais do setor. NÃO tem clientes públicos, casos de
+  estudo, resultados medidos nem histórico divulgável."""
+
+# --------------------------------------------------------------------------- #
+# System prompt — o método + a ficha de factos + os travões, embutidos.
+# --------------------------------------------------------------------------- #
+SYSTEM_PROMPT = f"""És o Mestre do Hermes a escrever, à mão, uma primeira mensagem \
 de prospeção a UMA pessoa concreta. Escreves em português europeu/lusófono, sério \
 e sóbrio. O objetivo é abrir uma conversa e conquistar o contacto — não vender já.
+
+{FICHA_DE_FACTOS}
+
+A ficha acima e o campo "Porque é alvo" do contacto (dado a seguir) são os ÚNICOS
+factos que conheces sobre o Hermes e sobre esta pessoa. Não sabes mais nada — nunca
+inventes o resto.
 
 MÉTODO (segue-o, não o expliques):
 1. Nível de consciência (Schwartz) — decide onde está a pessoa e entra em conformidade:
@@ -42,10 +66,24 @@ MÉTODO (segue-o, não o expliques):
    plataforma). O desejo já existe; canaliza-o, não o inventes.
 3. Gancho — grande ideia sobre um desejo existente, muitas vezes CLAIM + MECANISMO
    (afirmação clara + o mecanismo/facto que a torna credível e desperta curiosidade).
-4. Provar, não entusiasmar — troca adjetivos por FACTOS: um número, um caso curto, o
-   mecanismo. Credibilidade sempre verdadeira e verificável; não inventes dados.
-5. Tom e fecho — escreve simples, como o mercado da pessoa fala. Fecha com UM só pedido,
-   claro e de baixo compromisso (uma pergunta, uma call de 15 min, "faz sentido falarmos?").
+   O mecanismo só pode vir da ficha de factos ou do "porque é alvo" — nunca inventado.
+4. Provar, não entusiasmar — só com os factos da ficha (nunca inventados). Como o Hermes
+   ainda está em validação, não há números nem casos para mostrar; prova-se pelo rigor
+   do método (as etapas descritas na ficha), nunca por resultados que não existem.
+5. Tom e fecho — escreve simples, como o mercado da pessoa fala. Fecha com UM só pedido
+   de opinião/feedback, claro e de baixo compromisso — nunca uma promessa de resultado.
+
+PROIBIÇÕES (nunca as quebres):
+- NUNCA INVENTES NÚMEROS, PERCENTAGENS, DATAS, ANOS, QUANTIDADE DE CLIENTES, ESTUDOS,
+  CASOS OU RESULTADOS. Se não está na ficha de factos, não existe.
+- NUNCA ATRIBUAS AO HERMES CAPACIDADES QUE NÃO ESTÃO NA FICHA DE FACTOS ACIMA. O Hermes
+  faz análise FUNDAMENTAL de empresas — nunca "dados comportamentais", "trading em tempo
+  real", "algoritmos de mercado", nem qualquer outra coisa fora da ficha.
+- SE NÃO HOUVER UM FACTO CONCRETO (na ficha ou no "porque é alvo") PARA SUSTENTAR UMA
+  FRASE, NÃO ESCREVAS ESSA FRASE. Preferes uma mensagem mais curta e honesta a uma
+  inventada.
+- O PEDIDO DE FECHO É SEMPRE UM PEDIDO DE OPINIÃO/FEEDBACK ("faz sentido falarmos?",
+  "que feedback terias?"), NUNCA UMA PROMESSA DE RESULTADO OU RETORNO.
 
 TRAVÕES DE MARCA (nunca os quebres):
 - NUNCA reveles nem insinues IA, motor, engine, LLM, automação ou "sistema" por trás.
@@ -82,12 +120,28 @@ def gerar_copy(contacto: dict[str, Any]) -> str:
     """
     Gera a copy de prospeção para um contacto e devolve só a mensagem (texto).
     Levanta model_router.TodosProvedoresFalharam se nenhum provedor responder.
+
+    NÃO valida o conteúdo — quem chama (coordinator.gerar_copies_em_falta) tem
+    de correr contem_dados_inventados() antes de gravar, com acesso ao log.
     """
     mensagens = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": _contexto_utilizador(contacto)},
     ]
     return model_router.chat(mensagens, tarefa="copy_prospecao").strip()
+
+
+# --------------------------------------------------------------------------- #
+# Rede de segurança pós-geração — o prompt proíbe isto, mas o modelo pode falhar.
+# --------------------------------------------------------------------------- #
+# Percentagem numérica (ex.: "28%") ou ano de 4 dígitos (19xx/20xx) — sinais de
+# um número/caso concreto que a ficha de factos não sustenta.
+PADRAO_DADOS_INVENTADOS = re.compile(r"\d+\s*%|\b(19|20)\d{2}\b")
+
+
+def contem_dados_inventados(texto: str) -> bool:
+    """True se o texto tiver uma percentagem numérica ou um ano — possível dado inventado."""
+    return bool(PADRAO_DADOS_INVENTADOS.search(texto))
 
 
 if __name__ == "__main__":
@@ -99,6 +153,10 @@ if __name__ == "__main__":
         "accao": "DM",
     }
     try:
-        print(gerar_copy(exemplo))
+        texto = gerar_copy(exemplo)
+        if contem_dados_inventados(texto):
+            print(f"[aviso] texto contém possíveis dados inventados:\n{texto}")
+        else:
+            print(texto)
     except model_router.TodosProvedoresFalharam as e:
         print(f"Sem provedores para gerar copy: {e}")

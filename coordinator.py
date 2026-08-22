@@ -6,7 +6,10 @@ O que faz numa corrida:
     (b) calcula o progresso do dia por canal vs metas (msgs_*_dia) e a % Angola;
     (c) identifica o que falta para as metas e os contactos que estão a arrefecer;
     (d) usa o model_router para gerar um comentário/decisão curta (best-effort);
-    (e) escreve um resumo da corrida em prospeccao_log
+    (e) gera copy para a fila (DM, "Na fila", sem mensagem pronta), rejeitando e
+        registando (tipo='copy_rejeitada') qualquer texto com sinais de dados
+        inventados (percentagem/ano) em vez de gravar em mensagem_pronta;
+    (f) escreve um resumo da corrida em prospeccao_log
         (tipo='coordenador_run', dados jsonb com os números).
 
 O que NUNCA faz:
@@ -232,6 +235,26 @@ def gerar_copies_em_falta(conn: psycopg.Connection) -> int:
             continue
         if not texto:
             continue
+
+        # Rede de segurança: rejeita e regista se parecer ter dados inventados
+        # (percentagem numérica ou ano) — nunca grava em mensagem_pronta.
+        if copy_engine.contem_dados_inventados(texto):
+            motivo = (
+                "texto contém percentagem numérica ou ano — possível dado "
+                "inventado (o Hermes está em validação, sem números/casos reais)"
+            )
+            print(f"[copy] rejeitada para {contacto.get('id_unico')}: {motivo}")
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO prospeccao_log (ts, tipo, modelo, detalhe, dados) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (datetime.now(timezone.utc), "copy_rejeitada", None, motivo,
+                     json.dumps({"id_unico": contacto.get("id_unico"), "texto": texto},
+                                ensure_ascii=False)),
+                )
+            conn.commit()
+            continue
+
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE prospeccao_inbox SET mensagem_pronta = %s "
