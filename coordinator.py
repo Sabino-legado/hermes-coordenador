@@ -329,11 +329,22 @@ def correr() -> ResumoCorrida:
     with _ligar() as conn:
         with conn.cursor() as cur:
             resumo = calcular_resumo(cur)
-        # Comentário fora do cursor de leitura (chamada de rede ao modelo).
-        resumo.comentario = gerar_comentario(resumo)
 
-        # Gera copy para a fila que precisa (DM, na fila, sem mensagem pronta).
+        # Gera copy para a fila que precisa (DM, na fila, sem mensagem pronta) —
+        # PRIMEIRO, para sabermos se houve trabalho novo antes de decidir gastar
+        # (ou não) uma chamada ao modelo no comentário abaixo.
         resumo.copies_geradas = gerar_copies_em_falta(conn)
+
+        # Comentário (chamada de rede ao modelo): só vale a pena quando há algo
+        # de novo a comentar. Uma corrida sem copy nenhuma gerada e sem nenhuma
+        # meta de canal em falta (falta_por_canal vazio — hoje é sempre o caso,
+        # com as metas placeholder msgs_*_dia desactivadas) não tem nada de novo
+        # para o modelo dizer; gastar uma chamada só para confirmar o óbvio é
+        # desperdício. Best-effort continua igual quando HÁ trabalho.
+        if resumo.copies_geradas == 0 and not resumo.falta_por_canal:
+            resumo.comentario = "(corrida sem trabalho novo — modelo não chamado)"
+        else:
+            resumo.comentario = gerar_comentario(resumo)
 
         # Regista a corrida no log.
         with conn.cursor() as cur:

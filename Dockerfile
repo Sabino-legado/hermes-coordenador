@@ -23,4 +23,15 @@ USER hermes
 ENV RUN_MODE=loop \
     INTERVALO_MIN=30
 
+# V-F22: sem isto o Coolify mostrava "Running (unknown)" mesmo com o
+# processo travado — nenhum sinal externo distinguia "loop vivo" de
+# "contentor pendurado". entrypoint.py::_uma_corrida toca /tmp/heartbeat no
+# fim de CADA ciclo (sucesso OU falha contida) — este comando falha se o
+# ficheiro não existir ou for mais velho que 2×INTERVALO_MIN + 5 min de
+# folga (65 min com o INTERVALO_MIN=30 por omissão). stdlib só, sem
+# dependência nova. --start-period dá tempo à 1ª corrida (rede + modelo)
+# antes de o healthcheck poder falhar a sério.
+HEALTHCHECK --interval=300s --timeout=10s --start-period=180s --retries=3 \
+  CMD python -c "import os,sys,time; c='/tmp/heartbeat'; i=float(os.environ.get('INTERVALO_MIN','').strip() or '30'); sys.exit(0 if os.path.exists(c) and (time.time()-os.path.getmtime(c))<(i*2+5)*60 else 1)"
+
 CMD ["python", "entrypoint.py"]

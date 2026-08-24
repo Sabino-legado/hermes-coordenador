@@ -18,6 +18,7 @@ import sys
 import time
 import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 
 import coordinator
 import model_router
@@ -28,6 +29,12 @@ import model_router
 # get devolve "" e o float("") seguinte rebenta o contentor.
 RUN_MODE = (os.environ.get("RUN_MODE", "").strip() or "loop").lower()
 INTERVALO_MIN = float(os.environ.get("INTERVALO_MIN", "").strip() or "30")
+
+# Ficheiro que marca "o loop está vivo" (V-F22) — lido pelo HEALTHCHECK do
+# Dockerfile. Caminho fixo dentro do contentor, não configurável por env (o
+# healthcheck do Dockerfile tem de saber onde procurar sem depender de env
+# vars que podiam divergir dos dois lados).
+CAMINHO_HEARTBEAT = "/tmp/heartbeat"
 
 _a_correr = True
 
@@ -41,6 +48,15 @@ def _parar(signum, _frame):
 
 def _agora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _tocar_heartbeat() -> None:
+    """Marca "loop vivo" — nunca "corrida perfeita". Best-effort: uma falha
+    aqui (ex.: /tmp somente-leitura) nunca deve rebentar o contentor."""
+    try:
+        Path(CAMINHO_HEARTBEAT).touch()
+    except Exception as e:  # noqa: BLE001
+        print(f"[{_agora()}] falha ao tocar heartbeat: {e}")
 
 
 def _uma_corrida() -> None:
@@ -59,6 +75,12 @@ def _uma_corrida() -> None:
             )
         except Exception:  # noqa: BLE001
             pass
+    finally:
+        # Heartbeat = "o loop continua vivo", não "a corrida foi perfeita" —
+        # toca mesmo quando a corrida falhou (contida acima), para o
+        # healthcheck do Dockerfile distinguir "processo travado" de "corrida
+        # com erro" (o 2º não deve reiniciar o contentor, o 1º deve).
+        _tocar_heartbeat()
 
 
 def main() -> int:
