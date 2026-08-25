@@ -157,7 +157,62 @@ def gerar_copy(contacto: dict[str, Any]) -> str:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": _contexto_utilizador(contacto)},
     ]
-    return model_router.chat(mensagens, tarefa="copy_prospecao").strip()
+    texto = model_router.chat(mensagens, tarefa="copy_prospecao").strip()
+    # Concordância da marca corrigida SEMPRE à saída (idempotente — texto já
+    # correcto passa intocado), para nenhum chamador gravar "No o Hermes
+    # Research"/"Na Hermes Research"/"fundada por Sabino" em mensagem_pronta.
+    return corrigir_concordancia_marca(texto)
+
+
+# --------------------------------------------------------------------------- #
+# Concordância da marca — correcção determinística e IDEMPOTENTE pós-geração.
+#
+# Origem real do defeito (12 mensagens em 69, 24/08/2026): a instrução dura do
+# SYSTEM_PROMPT ("escreve sempre 'o Hermes Research'") leva modelos fracos da
+# cadeia grátis a COLAR o artigo por cima de texto que já estava certo ("No
+# Hermes Research" -> "No o Hermes Research") ou a ignorá-la ("Na Hermes
+# Research", "fundada por"). Não havia até aqui nenhuma normalização em código.
+# Esta corrige só o que está errado e nunca toca em texto já correcto:
+# aplicar duas vezes dá SEMPRE o mesmo resultado que aplicar uma (idempotente,
+# garantido por teste em test_copy_engine.py).
+#
+# "fundada" só é corrigida no contexto da marca/do Mestre — uma mensagem pode
+# falar, no feminino legítimo, de uma empresa do CONTACTO ("a Sonangol,
+# fundada em..."); corrigir às cegas seria repetir o mesmo tipo de estrago.
+# --------------------------------------------------------------------------- #
+_CORRECOES_CONCORDANCIA: list[tuple[re.Pattern[str], str]] = [
+    # 1) Artigo duplicado antes da marca ("No o Hermes Research", "o o ...").
+    (re.compile(r"\b([Nn]o|[Dd]o|[Pp]elo|[Aa]o|[Oo])\s+o(\s+Hermes\s+Research)"), r"\1\2"),
+    #    Variante híbrida feminina ("Na o Hermes Research") — perde aqui o
+    #    artigo extra; o género é corrigido pelas regras 2 a seguir.
+    (re.compile(r"\b([Nn]a|[Dd]a|[Pp]ela|[Aa])\s+o(\s+Hermes\s+Research)"), r"\1\2"),
+    # 2) Género feminino no artigo/contração ("Na/da/pela/a/à Hermes Research").
+    (re.compile(r"\b([Nn]|[Dd])a(\s+Hermes\s+Research)"), r"\1o\2"),
+    (re.compile(r"\b([Pp])ela(\s+Hermes\s+Research)"), r"\1elo\2"),
+    (re.compile(r"\bA(\s+Hermes\s+Research)"), r"O\1"),
+    (re.compile(r"\ba(\s+Hermes\s+Research)"), r"o\1"),
+    (re.compile(r"\bÀ(\s+Hermes\s+Research)"), r"Ao\1"),
+    (re.compile(r"\bà(\s+Hermes\s+Research)"), r"ao\1"),
+    # 3) "fundada" apenas ligada ao Mestre ou à marca — nunca genérico.
+    (re.compile(r"\b([Ff])undada(\s+por\s+Sabino)"), r"\1undado\2"),
+    (re.compile(r"(Hermes\s+Research[,\s]\s*)fundada\b"), r"\1fundado"),
+]
+
+
+def corrigir_concordancia_marca(texto: str) -> str:
+    """
+    Corrige a concordância de género da marca no texto gerado. Idempotente:
+    texto já correcto sai intocado; aplicar N vezes = aplicar 1 vez.
+    Repete as passagens até estabilizar (cobre encadeados como "Na o o Hermes
+    Research"); converge sempre porque cada regra só remove/da género a artigos
+    imediatamente antes de "Hermes Research", nunca acrescenta material novo.
+    """
+    anterior = None
+    while anterior != texto:
+        anterior = texto
+        for padrao, substituicao in _CORRECOES_CONCORDANCIA:
+            texto = padrao.sub(substituicao, texto)
+    return texto
 
 
 # --------------------------------------------------------------------------- #
