@@ -41,7 +41,7 @@ Português europeu. Sem brasileirismos: "modelo de negócio" e não "modelagem";
 Sempre "o Hermes Research" e "fundado por Sabino Kalufele". Masculino, sem excepção.
 Tratamento consistente do princípio ao fim de cada mensagem: "você" em LinkedIn e contactos institucionais (empresas, jornais, SGOIC, SDVM); "tu" só em Instagram e TikTok de criadores individuais. Nunca misturar os dois na mesma mensagem.
 Sem bloco de assinatura em DMs — a plataforma já identifica quem envia.
-O fecho é sempre um pedido de opinião ou feedback. Nunca uma promessa de resultado.
+O fecho é sempre uma oferta concreta e de baixo custo para o contacto: propor que ele escolha um emitente ou empresa e receba a análise. Nunca um pedido de opinião, de validação, de crítica ou de feedback. Nunca uma promessa de resultado.
 Os dois guardas fazem coisas diferentes — e é de propósito
 Guarda
 O que apanha
